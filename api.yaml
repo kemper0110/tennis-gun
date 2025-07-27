@@ -1,0 +1,79 @@
+openapi: 3.1.0
+info:
+  title: Tennis Gun
+  version: 0.0.1
+servers:
+  - url: 'http://tennis-gun.local'
+paths:
+  /start:
+    post:
+      responses:
+        200:
+          description: OK
+  /stop:
+    post:
+      responses:
+        200:
+          description: OK
+  /shooter:
+    patch:
+      parameters:
+        - in: query
+          name: top_speed
+          schema:
+            type: number
+        - in: query
+          name: bottom_speed
+          schema:
+            type: number
+      responses:
+        200:
+          description: OK
+  /delivery:
+    patch:
+      parameters:
+        - in: query
+          name: speed
+          schema:
+            type: number
+      responses:
+        200:
+          description: OK
+  /status:
+    get:
+      responses:
+        200:
+          description: OK
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                $ref: "#/components/schemas/StatusStream"
+components:
+  schemas:
+    StatusStream:
+      type: object
+      required: [id, event, data]
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the stock update event
+        event:
+          type: string
+          description: Event type
+          const: status_update
+        data:
+          $ref: "#/components/schemas/Status"
+    Status:
+      type: object
+      properties:
+        shooter:
+          type: object
+          properties:
+            speed:
+              type: number
+        delivery:
+          type: object
+          properties:
+            speed:
+              type: number
