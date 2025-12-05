@@ -4,37 +4,26 @@
 #include <ESPAsyncWebServer.h>
 #include <ESPmDNS.h>
 #include <ESP32Servo.h>
-#define ARDUINOJSON_SLOT_ID_SIZE 1
-#define ARDUINOJSON_STRING_LENGTH_SIZE 1
-#define ARDUINOJSON_USE_DOUBLE 0
-#define ARDUINOJSON_USE_LONG_LONG 0
-#include <ArduinoJson.h>
+#include <LittleFS.h>
 #include "wifi-credentials.h"
+#include "status-as-json.h"
+#include "status.h"
 
-const auto SHOOTER_TOP_PIN = 4;
-const auto SHOOTER_BOTTOM_PIN = 5;
-const auto DELIVERY_PIN = 6;
-const auto DELIVERY_IN1_PIN = 3;
-const auto DELIVERY_IN2_PIN = 7;
+#define SHOOTER_TOP_PIN 4
+#define SHOOTER_BOTTOM_PIN 5
+#define DELIVERY_PIN 6
+#define DELIVERY_IN1_PIN 7
+#define DELIVERY_IN2_PIN 3
 
 Servo shooterTopServo, shooterBottomServo;
-
-const int led = 13;
 
 AsyncWebServer server(80);
 AsyncEventSource statusEvents("/status-events");
 AsyncCorsMiddleware cors;
 
-bool running = false;
-
-struct {
-  int top_speed = 0;
-  int bottom_speed = 0;
-} shooter;
-
-struct {
-  int speed = 0;
-} delivery;
+extern bool running;
+extern Shooter shooter;
+extern Delivery delivery;
 
 bool broadcastUpdates = false;
 
@@ -43,14 +32,8 @@ void handleStatus(AsyncWebServerRequest *request) {
   request->send(200, "application/json", statusJson);
 }
 
-void handleRoot(AsyncWebServerRequest *request) {
-  request->send(404, "text/plain", "Nothing to see here");
-}
-
 void notFound(AsyncWebServerRequest *request) {
-  digitalWrite(led, 1);
-  request->send(404, "text/plain", "Not found");
-  digitalWrite(led, 0);
+  request->send(404, "text/plain", "Page not found");
 }
 
 void handleStart(AsyncWebServerRequest *request) {
@@ -109,39 +92,28 @@ void handleDelivery(AsyncWebServerRequest *request) {
   request->send(200);
 }
 
-String getStatusAsJson() {
-  JsonDocument doc;
-
-  doc[F("running")] = running;
-  doc[F("freeHeap")] = ESP.getFreeHeap() / 1024;
-
-  auto shooter_json = doc[F("shooter")].to<JsonObject>();
-  shooter_json[F("top_speed")] = shooter.top_speed;
-  shooter_json[F("bottom_speed")] = shooter.bottom_speed;
-  doc[F("delivery")][F("speed")] = delivery.speed;
-
-  String output;
-  serializeJson(doc, output);
-  return output;
-}
-
 void setup(void) {
-  pinMode(led, OUTPUT);
-  digitalWrite(led, 0);
-
   Serial.begin(115200);
 
-  Serial.println("periphery init");
+  {
+    shooterTopServo.attach(SHOOTER_TOP_PIN);
+    shooterBottomServo.attach(SHOOTER_BOTTOM_PIN);
 
-  shooterTopServo.attach(SHOOTER_TOP_PIN);
-  shooterBottomServo.attach(SHOOTER_BOTTOM_PIN);
+    pinMode(DELIVERY_IN1_PIN, OUTPUT);
+    pinMode(DELIVERY_IN2_PIN, OUTPUT);
+    pinMode(DELIVERY_PIN, OUTPUT);
+    digitalWrite(DELIVERY_IN1_PIN, LOW);
+    digitalWrite(DELIVERY_IN2_PIN, LOW);
+    analogWrite(DELIVERY_PIN, 0);
+  }
 
-  pinMode(DELIVERY_IN1_PIN, OUTPUT);
-  pinMode(DELIVERY_IN2_PIN, OUTPUT);
-  pinMode(DELIVERY_PIN, OUTPUT);
-  digitalWrite(DELIVERY_IN1_PIN, LOW);
-  digitalWrite(DELIVERY_IN2_PIN, LOW);
-
+  {
+    if (!LittleFS.begin()) {
+      Serial.println("LittleFS mount failed");
+      return;
+    }
+    Serial.println("LittleFS mounted");
+  }
 
   {
     WiFi.mode(WIFI_STA);
@@ -159,6 +131,7 @@ void setup(void) {
     Serial.println(WiFi.localIP());
   }
 
+
   if (MDNS.begin("tennis-gun")) {
     Serial.println("MDNS responder started");
   }
@@ -170,7 +143,6 @@ void setup(void) {
 
     server.addMiddleware(&cors);
 
-    server.on("/", HTTP_ANY, handleRoot);
     server.on("/status", HTTP_GET, handleStatus);
     server.on("/start", HTTP_POST, handleStart);
     server.on("/stop", HTTP_POST, handleStop);
@@ -183,6 +155,8 @@ void setup(void) {
       client->send(getStatusAsJson(), nullptr, millis());
     });
 
+    server.serveStatic("/", LittleFS, "/", "public, max-age=86401").setDefaultFile("index.html").setTryGzipFirst(true);
+
     server.begin();
   }
   Serial.println("HTTP server started");
@@ -190,6 +164,7 @@ void setup(void) {
 
 void loop(void) {
   if (broadcastUpdates) {
+    const auto updateStartTime = millis();
     broadcastUpdates = false;
     Serial.println("Reacting to broadcastUpdates");
     const auto status = getStatusAsJson();
@@ -210,5 +185,9 @@ void loop(void) {
       digitalWrite(DELIVERY_IN2_PIN, LOW);
       analogWrite(DELIVERY_PIN, 0);
     }
+    const auto updateElapsedTime = millis() - updateStartTime;
+    Serial.print("Update applied in ");
+    Serial.print(updateElapsedTime);
+    Serial.println("ms");
   }
 }

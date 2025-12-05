@@ -9,3 +9,6 @@ Async TCP:3.4.4 by ESP32Async
 ESP Async WebServer:3.7.7 by ESP32Async
 ESP32Servo:3.0.7 by Kevin
 ArduinoJson:7.4.2 by Benoit Blanchon
+
+LittleFS
+https://0voltiq.ru/arduino-ide-2-littlefs-uploader/
