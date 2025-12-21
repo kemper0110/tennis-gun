@@ -15,9 +15,6 @@ type State = {
     }
 }
 
-// работает только с теннисной пушкой в локальной сети
-const url = 'http://tennis-gun.local'
-
 function App() {
     const [notify, notificationContext] = notification.useNotification();
     const [state, setState] = useState<State | undefined>(undefined)
@@ -39,7 +36,7 @@ function App() {
     }, [state?.delivery.speed]);
 
     useEffect(() => {
-        const source = new EventSource(url + '/status-events')
+        const source = new EventSource('/status-events')
         source.onerror = evt => {
             console.error(evt)
             notify.error({message: 'status-events error'})
@@ -56,7 +53,7 @@ function App() {
         if (pendingRun) return
         setPendingRun(true)
         try {
-            await fetch(url + '/start', {method: 'POST'})
+            await fetch('/start', {method: 'POST'})
         } catch (e) {
             console.error(e)
             // @ts-ignore
@@ -70,7 +67,7 @@ function App() {
         if (pendingRun) return
         setPendingRun(true)
         try {
-            await fetch(url + '/stop', {method: 'POST'})
+            await fetch('/stop', {method: 'POST'})
         } catch (e) {
             console.error(e)
             // @ts-ignore
@@ -81,14 +78,14 @@ function App() {
     }
 
     const onShooterTopSpeedChange = async (value: number) => {
-        await fetch(url + `/shooter?top_speed=${value}`, {method: 'PATCH',})
+        await fetch('/shooter?' + new URLSearchParams({top_speed: String(value)}), {method: 'PATCH',})
     }
     const onShooterBottomSpeedChange = async (value: number) => {
-        await fetch(url + `/shooter?bottom_speed=${value}`, {method: 'PATCH',})
+        await fetch('/shooter?' + new URLSearchParams({bottom_speed: String(value)}), {method: 'PATCH',})
     }
 
     const onDeliverySpeedChange = async (value: number) => {
-        await fetch(url + `/delivery?speed=${value}`, {method: 'PATCH',})
+        await fetch('/delivery?' + new URLSearchParams({speed: String(value)}), {method: 'PATCH',})
     }
 
     return (
