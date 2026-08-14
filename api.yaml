@@ -5,6 +5,15 @@ info:
 servers:
   - url: 'http://tennis-gun.local'
 paths:
+  /ip:
+    get:
+      responses:
+        200:
+          description: Current board IP address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IpAddress"
   /start:
     post:
       responses:
@@ -51,6 +60,13 @@ paths:
                 $ref: "#/components/schemas/StatusStream"
 components:
   schemas:
+    IpAddress:
+      type: object
+      required: [ip]
+      properties:
+        ip:
+          type: string
+          format: ipv4
     StatusStream:
       type: object
       required: [id, event, data]

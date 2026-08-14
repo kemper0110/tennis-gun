@@ -62,6 +62,13 @@ void handleStatus(AsyncWebServerRequest *request) {
   request->send(200, "application/json", statusJson);
 }
 
+void handleIp(AsyncWebServerRequest *request) {
+  String response = F("{\"ip\":\"");
+  response += WiFi.localIP().toString();
+  response += F("\"}");
+  request->send(200, "application/json", response);
+}
+
 void notFound(AsyncWebServerRequest *request) {
   request->send(404, "text/plain", "Page not found");
 }
@@ -188,6 +195,7 @@ void setup(void) {
 
     server.addMiddleware(&cors);
 
+    server.on("/ip", HTTP_GET, handleIp);
     server.on("/status", HTTP_GET, handleStatus);
     server.on("/start", HTTP_POST, handleStart);
     server.on("/stop", HTTP_POST, handleStop);
