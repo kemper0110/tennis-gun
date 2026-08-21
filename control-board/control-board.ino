@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <AsyncTCP.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
@@ -63,9 +64,11 @@ void handleStatus(AsyncWebServerRequest *request) {
 }
 
 void handleIp(AsyncWebServerRequest *request) {
-  String response = F("{\"ip\":\"");
-  response += WiFi.localIP().toString();
-  response += F("\"}");
+  JsonDocument doc;
+  doc[F("ip")] = WiFi.localIP().toString();
+
+  String response;
+  serializeJson(doc, response);
   request->send(200, "application/json", response);
 }
 
