@@ -1,18 +1,15 @@
-import {useEffect, useState, type KeyboardEvent} from 'react'
+import {useEffect, useRef, useState, type KeyboardEvent} from 'react'
+import {
+  isWebBluetoothSupported,
+  TennisGunBleClient,
+  type ControlCommand,
+  type DeviceState,
+} from './ble.ts'
 
-type State = {
-  running: boolean
-  freeHeap: number
-  shooter: {
-    top_speed: number
-    bottom_speed: number
-  }
-  delivery: {
-    speed: number
-  }
-}
+type ConnectionState = 'disconnected' | 'connecting' | 'connected'
 
 type SpeedControlProps = {
+  disabled: boolean
   label: string
   value: number
   onChange: (value: number) => void
@@ -25,21 +22,15 @@ type ErrorToastProps = {
 }
 
 const COMMIT_KEYS = new Set([
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-  'ArrowUp',
-  'End',
-  'Home',
-  'PageDown',
-  'PageUp',
+  'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp',
+  'End', 'Home', 'PageDown', 'PageUp',
 ])
 
-function SpeedControl({label, value, onChange, onCommit}: SpeedControlProps) {
+function SpeedControl({disabled, label, value, onChange, onCommit}: SpeedControlProps) {
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (!COMMIT_KEYS.has(event.key)) return
-
     event.preventDefault()
+
     const currentValue = event.currentTarget.valueAsNumber
     const nextValue = (() => {
       switch (event.key) {
@@ -57,10 +48,6 @@ function SpeedControl({label, value, onChange, onCommit}: SpeedControlProps) {
     onChange(nextValue)
   }
 
-  const handleKeyUp = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (COMMIT_KEYS.has(event.key)) onCommit(event.currentTarget.valueAsNumber)
-  }
-
   return (
     <section className="flex h-full flex-col items-center">
       <label className="mb-4 text-center text-xl font-semibold" htmlFor={`speed-${label}`}>
@@ -69,12 +56,15 @@ function SpeedControl({label, value, onChange, onCommit}: SpeedControlProps) {
       <input
         aria-valuetext={`${value}%`}
         className="range range-primary range-xl range-vertical h-full"
+        disabled={disabled}
         id={`speed-${label}`}
         max={100}
         min={0}
         onInput={event => onChange(event.currentTarget.valueAsNumber)}
         onKeyDown={handleKeyDown}
-        onKeyUp={handleKeyUp}
+        onKeyUp={event => {
+          if (COMMIT_KEYS.has(event.key)) onCommit(event.currentTarget.valueAsNumber)
+        }}
         onPointerCancel={event => onCommit(event.currentTarget.valueAsNumber)}
         onPointerUp={event => onCommit(event.currentTarget.valueAsNumber)}
         type="range"
@@ -97,110 +87,143 @@ function ErrorToast({message, onClose}: ErrorToastProps) {
   )
 }
 
-async function request(path: string, method: 'POST' | 'PATCH') {
-  const response = await fetch(path, {method})
-  if (!response.ok) throw new Error(`${method} ${path} failed with status ${response.status}`)
-}
-
 function App() {
-  const [state, setState] = useState<State>()
+  const supported = isWebBluetoothSupported()
+  const clientRef = useRef<TennisGunBleClient | undefined>(undefined)
+  const pendingCountRef = useRef(0)
+  const [connection, setConnection] = useState<ConnectionState>('disconnected')
+  const [state, setState] = useState<DeviceState>()
   const [error, setError] = useState<string>()
-  const [pendingRun, setPendingRun] = useState(false)
-  const [shooterBottomSpeed, setShooterBottomSpeed] = useState(0)
-  const [shooterTopSpeed, setShooterTopSpeed] = useState(0)
+  const [pendingCommand, setPendingCommand] = useState(false)
+  const [topSpeed, setTopSpeed] = useState(0)
+  const [bottomSpeed, setBottomSpeed] = useState(0)
   const [deliverySpeed, setDeliverySpeed] = useState(0)
 
   useEffect(() => {
-    setShooterTopSpeed(state?.shooter.top_speed ?? 0)
-  }, [state?.shooter.top_speed])
-
-  useEffect(() => {
-    setShooterBottomSpeed(state?.shooter.bottom_speed ?? 0)
-  }, [state?.shooter.bottom_speed])
-
-  useEffect(() => {
-    setDeliverySpeed(state?.delivery.speed ?? 0)
-  }, [state?.delivery.speed])
-
-  useEffect(() => {
     if (!error) return
-
     const timeout = window.setTimeout(() => setError(undefined), 5000)
     return () => window.clearTimeout(timeout)
   }, [error])
 
-  useEffect(() => {
-    const source = new EventSource('/status-events')
-    source.onerror = event => {
-      console.error(event)
-      setError('status-events error')
-    }
-    source.onmessage = event => {
-      setState(JSON.parse(event.data))
-    }
-    return () => source.close()
-  }, [])
+  useEffect(() => () => clientRef.current?.disconnect(), [])
 
-  const runAction = async (path: '/start' | '/stop') => {
-    if (pendingRun) return
+  const handleDisconnected = () => {
+    setConnection('disconnected')
+    setState(undefined)
+    setTopSpeed(0)
+    setBottomSpeed(0)
+    setDeliverySpeed(0)
+    pendingCountRef.current = 0
+    setPendingCommand(false)
+    setError('Bluetooth connection lost. The board has been stopped.')
+  }
 
-    setPendingRun(true)
+  const connect = async () => {
+    if (!supported || connection === 'connecting') return
+    setConnection('connecting')
+    setError(undefined)
+
+    const client = new TennisGunBleClient(handleDisconnected)
+    clientRef.current = client
     try {
-      await request(path, 'POST')
+      const nextState = await client.connect()
+      setState(nextState)
+      setTopSpeed(nextState.top)
+      setBottomSpeed(nextState.bottom)
+      setDeliverySpeed(nextState.delivery)
+      setConnection('connected')
+      if (nextState.error) setError(`Board error: ${nextState.error}`)
     } catch (caughtError) {
-      console.error(caughtError)
+      clientRef.current = undefined
+      setConnection('disconnected')
+      setError(caughtError instanceof Error ? caughtError.message : String(caughtError))
+    }
+  }
+
+  const send = async (command: ControlCommand) => {
+    if (connection !== 'connected') return
+    pendingCountRef.current += 1
+    setPendingCommand(true)
+    try {
+      const nextState = await clientRef.current?.send(command)
+      if (!nextState) throw new Error('The board is not connected')
+      setState(nextState)
+      if (nextState.error) setError(`Board rejected the command: ${nextState.error}`)
+    } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : String(caughtError))
     } finally {
-      setPendingRun(false)
+      pendingCountRef.current = Math.max(0, pendingCountRef.current - 1)
+      setPendingCommand(pendingCountRef.current > 0)
     }
   }
 
-  const updateSpeed = async (path: string) => {
-    try {
-      await request(path, 'PATCH')
-    } catch (caughtError) {
-      console.error(caughtError)
-      setError(caughtError instanceof Error ? caughtError.message : String(caughtError))
-    }
-  }
-
+  // BLE commands are serialized by the client. Keep the controls interactive while
+  // a command is in flight; disabling them makes the whole panel appear frozen.
+  const controlsDisabled = connection !== 'connected'
   const startButtonClass = state?.running ? 'btn-error' : state ? 'btn-primary' : 'btn-neutral'
 
   return (
-    <main className="flex h-dvh w-full flex-col items-center justify-center p-4 md:p-10">
+    <main
+      aria-busy={pendingCommand}
+      className="flex min-h-dvh w-full flex-col items-center justify-center p-4 md:p-10"
+    >
       {error && <ErrorToast message={error} onClose={() => setError(undefined)} />}
+
+      <section className="mb-8 flex flex-col items-center gap-3 text-center">
+        <p className="text-sm font-semibold uppercase tracking-widest text-gray-500">
+          {connection === 'connected' ? 'Bluetooth connected' : 'Bluetooth disconnected'}
+        </p>
+        {connection !== 'connected' && (
+          <button
+            className="btn btn-primary btn-lg"
+            disabled={!supported || connection === 'connecting'}
+            onClick={connect}
+            type="button"
+          >
+            {connection === 'connecting' ? 'Connecting…' : 'Connect Tennis Gun'}
+          </button>
+        )}
+        {!supported && (
+          <p className="max-w-xl text-red-700">
+            Web Bluetooth is unavailable. Open this panel in Chrome or Edge on a supported Android, Windows, or macOS device.
+          </p>
+        )}
+      </section>
 
       <button
         className={`btn btn-xl h-auto px-16 py-8 ${startButtonClass}`}
-        disabled={!state || pendingRun}
-        onClick={() => runAction(state?.running ? '/stop' : '/start')}
+        disabled={controlsDisabled || !state}
+        onClick={() => send({type: state?.running ? 'stop' : 'start'})}
         type="button"
       >
         {state ? (state.running ? 'Stop' : 'Start') : 'Unknown'}
       </button>
 
-      <div className="mt-8 mb-12 flex h-[300px] flex-row items-center justify-center gap-16">
+      <div className="mt-8 mb-12 flex h-[300px] flex-row items-center justify-center gap-6 sm:gap-16">
         <SpeedControl
+          disabled={controlsDisabled}
           label="Shooter Top"
-          onChange={setShooterTopSpeed}
-          onCommit={value => updateSpeed(`/shooter?${new URLSearchParams({top_speed: String(value)})}`)}
-          value={shooterTopSpeed}
+          onChange={setTopSpeed}
+          onCommit={value => send({type: 'set_top_speed', value})}
+          value={topSpeed}
         />
         <SpeedControl
+          disabled={controlsDisabled}
           label="Shooter Bottom"
-          onChange={setShooterBottomSpeed}
-          onCommit={value => updateSpeed(`/shooter?${new URLSearchParams({bottom_speed: String(value)})}`)}
-          value={shooterBottomSpeed}
+          onChange={setBottomSpeed}
+          onCommit={value => send({type: 'set_bottom_speed', value})}
+          value={bottomSpeed}
         />
         <SpeedControl
+          disabled={controlsDisabled}
           label="Delivery"
           onChange={setDeliverySpeed}
-          onCommit={value => updateSpeed(`/delivery?${new URLSearchParams({speed: String(value)})}`)}
+          onCommit={value => send({type: 'set_delivery_speed', value})}
           value={deliverySpeed}
         />
       </div>
 
-      <h2 className="mt-4 text-xl font-semibold">Free heap space: {state?.freeHeap ?? 0}</h2>
+      <h2 className="mt-4 text-xl font-semibold">Free heap space: {state?.freeHeap ?? 0} KiB</h2>
     </main>
   )
 }

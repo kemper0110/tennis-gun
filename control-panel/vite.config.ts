@@ -1,16 +1,40 @@
 import {defineConfig} from 'vite'
 import react from '@vitejs/plugin-react-swc'
 import tailwindcss from '@tailwindcss/vite'
-import viteCompression from 'vite-plugin-compression';
+import {VitePWA} from 'vite-plugin-pwa'
 
-// https://vite.dev/config/
-export default defineConfig({
-    plugins: [react(), tailwindcss(), viteCompression({
-        algorithm: 'gzip',
-        deleteOriginFile: true
-    })],
-    build: {
-        outDir: "../control-board/data",
-        emptyOutDir: true,
-    }
-})
+export default defineConfig(({command}) => ({
+  base: command === 'build' ? '/tennis-gun/' : '/',
+  plugins: [
+    react(),
+    tailwindcss(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['tennis-gun.svg'],
+      manifest: {
+        name: 'Tennis Gun Control',
+        short_name: 'Tennis Gun',
+        description: 'Bluetooth control panel for Tennis Gun',
+        theme_color: '#ffffff',
+        background_color: '#ffffff',
+        display: 'standalone',
+        start_url: '/tennis-gun/',
+        scope: '/tennis-gun/',
+        icons: [{
+          src: 'tennis-gun.svg',
+          sizes: 'any',
+          type: 'image/svg+xml',
+          purpose: 'any maskable',
+        }],
+      },
+      workbox: {
+        navigateFallback: '/tennis-gun/index.html',
+        globPatterns: ['**/*.{html,js,css,svg,webmanifest}'],
+      },
+    }),
+  ],
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+  },
+}))
